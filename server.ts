@@ -11,167 +11,181 @@ dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-const db = new Database(path.join(__dirname, "thidua.db"));
-
-// Initialize Database
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT UNIQUE NOT NULL,
-    password TEXT NOT NULL,
-    role TEXT NOT NULL, -- 'admin' or 'leader'
-    group_id INTEGER,
-    FOREIGN KEY (group_id) REFERENCES groups(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS groups (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS students (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL,
-    group_id INTEGER,
-    FOREIGN KEY (group_id) REFERENCES groups(id)
-  );
-
-  CREATE TABLE IF NOT EXISTS rules (
-    id INTEGER PRIMARY KEY,
-    description TEXT NOT NULL,
-    points INTEGER NOT NULL
-  );
-
-  CREATE TABLE IF NOT EXISTS logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    student_id INTEGER,
-    rule_id INTEGER,
-    points_change INTEGER,
-    note TEXT,
-    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (student_id) REFERENCES students(id),
-    FOREIGN KEY (rule_id) REFERENCES rules(id)
-  );
-`);
-
-// Seed initial data if empty
-const groupCount = db.prepare("SELECT COUNT(*) as count FROM groups").get() as { count: number };
-if (groupCount.count === 0) {
-  const insertGroup = db.prepare("INSERT INTO groups (id, name) VALUES (?, ?)");
-  insertGroup.run(1, "Tổ 1");
-  insertGroup.run(2, "Tổ 2");
-  insertGroup.run(3, "Tổ 3");
-  insertGroup.run(4, "Tổ 4");
-
-  const insertUser = db.prepare("INSERT INTO users (username, password, role, group_id) VALUES (?, ?, ?, ?)");
-  insertUser.run("admin", "2026", "admin", null);
-  insertUser.run("to1", "2026", "leader", 1);
-  insertUser.run("to2", "2026", "leader", 2);
-  insertUser.run("to3", "2026", "leader", 3);
-  insertUser.run("to4", "2026", "leader", 4);
-
-  const insertStudent = db.prepare("INSERT INTO students (name, group_id) VALUES (?, ?)");
-  // Tổ 1
-  insertStudent.run("Puih Quân", 1);
-  insertStudent.run("Rơ Mah Tuyên", 1);
-  insertStudent.run("Phạm Thị Diễm Quỳnh", 1);
-  insertStudent.run("Hoàng Thị Minh Châu", 1);
-  insertStudent.run("Nguyễn Huy Tài", 1);
-  insertStudent.run("Nguyễn Thị Linh", 1);
-  insertStudent.run("Rơ Lan Tâm", 1);
-  insertStudent.run("Nguyễn Hoàng Anh", 1);
-  insertStudent.run("Rơ Lan Hân", 1);
-  insertStudent.run("Siu Kuân", 1);
-  insertStudent.run("Phạm Đình Chính", 1);
-  insertStudent.run("Hoàng Gia Long", 1);
-
-  // Tổ 2
-  insertStudent.run("Mai Thị Nương", 2);
-  insertStudent.run("Trần Thị Phương Ly", 2);
-  insertStudent.run("Trương Ngọc Tuyết", 2);
-  insertStudent.run("Vũ Thị Hải Yến", 2);
-  insertStudent.run("Phạm Quỳnh Anh", 2);
-  insertStudent.run("Nguyễn Như Đạt", 2);
-  insertStudent.run("Nguyễn Tú Tài", 2);
-  insertStudent.run("Lê Trung Nguyên", 2);
-  insertStudent.run("Phan Văn Tiến Dũng", 2);
-  insertStudent.run("Puil Gun", 2);
-
-  // Tổ 3
-  insertStudent.run("Nguyễn Thị Thuý Nga", 3);
-  insertStudent.run("Đậu Quỳnh Nga", 3);
-  insertStudent.run("Trần Quốc An", 3);
-  insertStudent.run("Trần Tú Tài", 3);
-  insertStudent.run("Nguyễn Hương Giang", 3);
-  insertStudent.run("Cầm Linh Nhi", 3);
-  insertStudent.run("Phạm Hoàng Anh Tú", 3);
-  insertStudent.run("Ngô Thành Ngàn", 3);
-  insertStudent.run("Rơ Lan Phương", 3);
-  insertStudent.run("Phạm Thị Liên", 3);
-  insertStudent.run("Dương Thị Yên Nhi", 3);
-
-  // Tổ 4
-  insertStudent.run("Nguyễn Thị Thùy Thương", 4);
-  insertStudent.run("Đỗ Khánh Việt Anh", 4);
-  insertStudent.run("Trần Đình Quang", 4);
-  insertStudent.run("Lê Thị Phương Thảo", 4);
-  insertStudent.run("Dương Thị Thanh Tâm", 4);
-  insertStudent.run("Lê Thị Thảo Phương", 4);
-  insertStudent.run("Trần Hải Lý", 4);
-  insertStudent.run("Đặng Thị Diễm Quỳnh", 4);
-  insertStudent.run("Rơ Lan Trúc", 4);
-  insertStudent.run("Rơ Ma BLí", 4);
-
-  const insertRule = db.prepare("INSERT INTO rules (description, points) VALUES (?, ?)");
-  insertRule.run("Đi học trễ / vào lớp sau GV / nói chuyện", -5);
-  insertRule.run("Vắng học không phép", -20);
-  insertRule.run("Trốn học (cúp tiết)", -10);
-  insertRule.run("Vắng có phép", -3);
-  insertRule.run("KT miệng 0–2 điểm", -10);
-  insertRule.run("KT miệng 3–4 điểm", -5);
-  insertRule.run("Quay cóp khi kiểm tra", -10);
-  insertRule.run("Ban cán sự lớp / Tham gia phong trào", 30);
-  insertRule.run("Sử dụng điện thoại trong giờ học", -10);
-  insertRule.run("Không áo đồng phục", -10);
-  insertRule.run("Mất trật tự / ghi sổ đầu bài", -10);
-  insertRule.run("Không lao động / trực nhật / HĐ tập thể", -20);
-  insertRule.run("Vi phạm ATGT", -10);
-  insertRule.run("Xả rác / mang đồ ăn nước uống / nói chuyện riêng", -5);
-  insertRule.run("Viết vẽ bậy / Ngồi lên bàn / xô đổ bàn ghế", -5);
-  insertRule.run("Làm lớp bị giờ T9, K8, K7, TB", -5);
-  insertRule.run("Nói tục, chửi thề", -10);
-  insertRule.run("Phát biểu, xây dựng bài", 2);
-  insertRule.run("Đạt điểm 8, 9, 10", 5);
-  insertRule.run("Làm việc tốt (Nhặt đồ trả đoàn trường)", 10);
-  insertRule.run("Son môi / nhuộm tóc / nam đeo khuyên tai", -5);
-  insertRule.run("Nói chuyện riêng / làm việc riêng", -5);
-}
-
 async function startServer() {
   const app = express();
   app.use(express.json());
 
+  let db: any;
+  try {
+    db = new Database(path.join(__dirname, "thidua.db"));
+    console.log("Database initialized");
+
+    // Initialize Database
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        role TEXT NOT NULL, -- 'admin' or 'leader'
+        group_id INTEGER,
+        FOREIGN KEY (group_id) REFERENCES groups(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS groups (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS students (
+        id INTEGER PRIMARY KEY,
+        name TEXT NOT NULL,
+        group_id INTEGER,
+        FOREIGN KEY (group_id) REFERENCES groups(id)
+      );
+
+      CREATE TABLE IF NOT EXISTS rules (
+        id INTEGER PRIMARY KEY,
+        description TEXT NOT NULL,
+        points INTEGER NOT NULL
+      );
+
+      CREATE TABLE IF NOT EXISTS logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        student_id INTEGER,
+        rule_id INTEGER,
+        points_change INTEGER,
+        note TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (student_id) REFERENCES students(id),
+        FOREIGN KEY (rule_id) REFERENCES rules(id)
+      );
+    `);
+
+    // Seed initial data if empty
+    const groupCount = db.prepare("SELECT COUNT(*) as count FROM groups").get() as { count: number };
+    if (groupCount.count === 0) {
+      console.log("Seeding initial data...");
+      const insertGroup = db.prepare("INSERT INTO groups (id, name) VALUES (?, ?)");
+      insertGroup.run(1, "Tổ 1");
+      insertGroup.run(2, "Tổ 2");
+      insertGroup.run(3, "Tổ 3");
+      insertGroup.run(4, "Tổ 4");
+
+      const insertUser = db.prepare("INSERT INTO users (username, password, role, group_id) VALUES (?, ?, ?, ?)");
+      insertUser.run("admin", "2026", "admin", null);
+      insertUser.run("to1", "2026", "leader", 1);
+      insertUser.run("to2", "2026", "leader", 2);
+      insertUser.run("to3", "2026", "leader", 3);
+      insertUser.run("to4", "2026", "leader", 4);
+
+      const insertStudent = db.prepare("INSERT INTO students (name, group_id) VALUES (?, ?)");
+      // Tổ 1
+      insertStudent.run("Puih Quân", 1);
+      insertStudent.run("Rơ Mah Tuyên", 1);
+      insertStudent.run("Phạm Thị Diễm Quỳnh", 1);
+      insertStudent.run("Hoàng Thị Minh Châu", 1);
+      insertStudent.run("Nguyễn Huy Tài", 1);
+      insertStudent.run("Nguyễn Thị Linh", 1);
+      insertStudent.run("Rơ Lan Tâm", 1);
+      insertStudent.run("Nguyễn Hoàng Anh", 1);
+      insertStudent.run("Rơ Lan Hân", 1);
+      insertStudent.run("Siu Kuân", 1);
+      insertStudent.run("Phạm Đình Chính", 1);
+      insertStudent.run("Hoàng Gia Long", 1);
+
+      // Tổ 2
+      insertStudent.run("Mai Thị Nương", 2);
+      insertStudent.run("Trần Thị Phương Ly", 2);
+      insertStudent.run("Trương Ngọc Tuyết", 2);
+      insertStudent.run("Vũ Thị Hải Yến", 2);
+      insertStudent.run("Phạm Quỳnh Anh", 2);
+      insertStudent.run("Nguyễn Như Đạt", 2);
+      insertStudent.run("Nguyễn Tú Tài", 2);
+      insertStudent.run("Lê Trung Nguyên", 2);
+      insertStudent.run("Phan Văn Tiến Dũng", 2);
+      insertStudent.run("Puil Gun", 2);
+
+      // Tổ 3
+      insertStudent.run("Nguyễn Thị Thuý Nga", 3);
+      insertStudent.run("Đậu Quỳnh Nga", 3);
+      insertStudent.run("Trần Quốc An", 3);
+      insertStudent.run("Trần Tú Tài", 3);
+      insertStudent.run("Nguyễn Hương Giang", 3);
+      insertStudent.run("Cầm Linh Nhi", 3);
+      insertStudent.run("Phạm Hoàng Anh Tú", 3);
+      insertStudent.run("Ngô Thành Ngàn", 3);
+      insertStudent.run("Rơ Lan Phương", 3);
+      insertStudent.run("Phạm Thị Liên", 3);
+      insertStudent.run("Dương Thị Yên Nhi", 3);
+
+      // Tổ 4
+      insertStudent.run("Nguyễn Thị Thùy Thương", 4);
+      insertStudent.run("Đỗ Khánh Việt Anh", 4);
+      insertStudent.run("Trần Đình Quang", 4);
+      insertStudent.run("Lê Thị Phương Thảo", 4);
+      insertStudent.run("Dương Thị Thanh Tâm", 4);
+      insertStudent.run("Lê Thị Thảo Phương", 4);
+      insertStudent.run("Trần Hải Lý", 4);
+      insertStudent.run("Đặng Thị Diễm Quỳnh", 4);
+      insertStudent.run("Rơ Lan Trúc", 4);
+      insertStudent.run("Rơ Ma BLí", 4);
+
+      const insertRule = db.prepare("INSERT INTO rules (description, points) VALUES (?, ?)");
+      insertRule.run("Đi học trễ / vào lớp sau GV / nói chuyện", -5);
+      insertRule.run("Vắng học không phép", -20);
+      insertRule.run("Trốn học (cúp tiết)", -10);
+      insertRule.run("Vắng có phép", -3);
+      insertRule.run("KT miệng 0–2 điểm", -10);
+      insertRule.run("KT miệng 3–4 điểm", -5);
+      insertRule.run("Quay cóp khi kiểm tra", -10);
+      insertRule.run("Ban cán sự lớp / Tham gia phong trào", 30);
+      insertRule.run("Sử dụng điện thoại trong giờ học", -10);
+      insertRule.run("Không áo đồng phục", -10);
+      insertRule.run("Mất trật tự / ghi sổ đầu bài", -10);
+      insertRule.run("Không lao động / trực nhật / HĐ tập thể", -20);
+      insertRule.run("Vi phạm ATGT", -10);
+      insertRule.run("Xả rác / mang đồ ăn nước uống / nói chuyện riêng", -5);
+      insertRule.run("Viết vẽ bậy / Ngồi lên bàn / xô đổ bàn ghế", -5);
+      insertRule.run("Làm lớp bị giờ T9, K8, K7, TB", -5);
+      insertRule.run("Nói tục, chửi thề", -10);
+      insertRule.run("Phát biểu, xây dựng bài", 2);
+      insertRule.run("Đạt điểm 8, 9, 10", 5);
+      insertRule.run("Làm việc tốt (Nhặt đồ trả đoàn trường)", 10);
+      insertRule.run("Son môi / nhuộm tóc / nam đeo khuyên tai", -5);
+      insertRule.run("Nói chuyện riêng / làm việc riêng", -5);
+      console.log("Seeding completed");
+    }
+  } catch (dbError) {
+    console.error("Database initialization error:", dbError);
+    // Continue without DB or handle appropriately
+  }
+
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", timestamp: new Date().toISOString() });
+    res.json({ status: "ok", timestamp: new Date().toISOString(), db: !!db });
   });
 
   // API Routes
   app.post("/api/login", (req, res) => {
+    if (!db) return res.status(500).json({ success: false, message: "Lỗi cơ sở dữ liệu" });
     const { username, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE username = ? AND password = ?").get(username, password) as any;
-    
-    if (user) {
-      res.json({ 
-        success: true, 
-        user: {
-          id: user.id,
-          username: user.username,
-          role: user.role,
-          group_id: user.group_id
-        }
-      });
-    } else {
-      res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+    try {
+      const user = db.prepare("SELECT * FROM users WHERE username = ? AND password = ?").get(username, password) as any;
+      
+      if (user) {
+        res.json({ 
+          success: true, 
+          user: {
+            id: user.id,
+            username: user.username,
+            role: user.role,
+            group_id: user.group_id
+          }
+        });
+      } else {
+        res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+      }
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Lỗi truy vấn cơ sở dữ liệu" });
     }
   });
 
