@@ -2,12 +2,16 @@ import express from "express";
 import { createServer as createViteServer } from "vite";
 import Database from "better-sqlite3";
 import path from "path";
+import { fileURLToPath } from "url";
 import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 
 dotenv.config();
 
-const db = new Database("thidua.db");
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const db = new Database(path.join(__dirname, "thidua.db"));
 
 // Initialize Database
 db.exec(`
@@ -147,6 +151,10 @@ async function startServer() {
   const app = express();
   app.use(express.json());
 
+  app.get("/api/health", (req, res) => {
+    res.json({ status: "ok", timestamp: new Date().toISOString() });
+  });
+
   // API Routes
   app.post("/api/login", (req, res) => {
     const { username, password } = req.body;
@@ -206,7 +214,7 @@ async function startServer() {
   });
 
   app.post("/api/logs", (req, res) => {
-    const { student_id, rule_id, points_change, note, user_id } = req.body;
+    const { student_id, rule_id, points_change, note, user_id, quantity = 1 } = req.body;
     
     // Check permissions
     const user = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
@@ -221,11 +229,44 @@ async function startServer() {
     }
 
     try {
-      db.prepare("INSERT INTO logs (student_id, rule_id, points_change, note) VALUES (?, ?, ?, ?)")
-        .run(student_id, rule_id, points_change, note);
+      const insert = db.prepare("INSERT INTO logs (student_id, rule_id, points_change, note) VALUES (?, ?, ?, ?)");
+      const q = Math.max(1, Math.min(10, parseInt(quantity as any) || 1));
+      
+      for (let i = 0; i < q; i++) {
+        insert.run(student_id, rule_id, points_change, note);
+      }
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, message: "Lỗi khi ghi nhận vi phạm" });
+    }
+  });
+
+  app.delete("/api/logs/:id", (req, res) => {
+    const { id } = req.params;
+    const { user_id } = req.body;
+
+    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
+    if (!user) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+
+    try {
+      // Admin can delete any log, leaders can only delete logs of their group members
+      if (user.role === 'leader') {
+        const log = db.prepare(`
+          SELECT l.*, s.group_id 
+          FROM logs l 
+          JOIN students s ON l.student_id = s.id 
+          WHERE l.id = ?
+        `).get(id) as any;
+        
+        if (!log || log.group_id !== user.group_id) {
+          return res.status(403).json({ success: false, message: "Bạn không có quyền xóa lỗi này" });
+        }
+      }
+
+      db.prepare("DELETE FROM logs WHERE id = ?").run(id);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, message: "Lỗi khi xóa bản ghi" });
     }
   });
 
@@ -235,24 +276,32 @@ async function startServer() {
   });
 
   app.get("/api/summary", (req, res) => {
-    const groups = db.prepare(`
-      SELECT 
-        g.id, 
-        g.name, 
-        COUNT(s.id) as student_count,
-        COALESCE(SUM(l.points_change), 0) + (COUNT(s.id) * 200) as total_points
-      FROM groups g
-      LEFT JOIN students s ON g.id = s.group_id
-      LEFT JOIN logs l ON s.id = l.student_id
-      GROUP BY g.id
-    `).all() as any[];
+    try {
+      const groups = db.prepare(`
+        SELECT 
+          g.id, 
+          g.name, 
+          (SELECT COUNT(*) FROM students WHERE group_id = g.id) as student_count,
+          (SELECT COALESCE(SUM(points_change), 0) FROM logs l JOIN students s ON l.student_id = s.id WHERE s.group_id = g.id) as total_points_change
+        FROM groups g
+      `).all() as any[];
 
-    const rankings = groups.map(g => ({
-      ...g,
-      avg_points: g.student_count > 0 ? g.total_points / g.student_count : 200
-    })).sort((a, b) => b.avg_points - a.avg_points);
+      const rankings = groups.map(g => {
+        const total_points = g.total_points_change + (g.student_count * 200);
+        return {
+          id: g.id,
+          name: g.name,
+          student_count: g.student_count,
+          total_points: total_points,
+          avg_points: g.student_count > 0 ? total_points / g.student_count : 200
+        };
+      }).sort((a, b) => b.avg_points - a.avg_points);
 
-    res.json(rankings);
+      res.json(rankings);
+    } catch (err) {
+      console.error("Summary API Error:", err);
+      res.status(500).json({ error: "Internal Server Error" });
+    }
   });
 
   app.get("/api/students", (req, res) => {
@@ -310,15 +359,22 @@ async function startServer() {
       Người dùng hiện tại là: ${user.role === 'admin' ? 'Quản trị viên (toàn quyền)' : `Tổ trưởng tổ ${user.group_id} (chỉ được nhập cho tổ ${user.group_id})`}.
       Nếu người dùng là Tổ trưởng và cố gắng nhập cho học sinh tổ khác, hãy đặt "found" là false và giải thích trong "explanation" rằng họ không có quyền.
 
+      HỖ TRỢ NHIỀU HÀNH ĐỘNG:
+      Người dùng có thể nhập nhiều lỗi cho một hoặc nhiều học sinh trong một tin nhắn (vd: "Quân đi trễ và nói chuyện riêng"). Hãy phân tích và trả về một danh sách các hành động.
+
       Hãy trả về kết quả dưới dạng JSON:
       {
-        "found": boolean,
-        "student_id": number | null,
-        "rule_id": number | null,
-        "points_change": number,
-        "explanation": string
+        "actions": [
+          {
+            "found": boolean,
+            "student_id": number | null,
+            "rule_id": number | null,
+            "points_change": number,
+            "explanation": string
+          }
+        ]
       }
-      Nếu không tìm thấy học sinh hoặc quy định phù hợp, hãy đặt found = false.
+      Nếu không tìm thấy học sinh hoặc quy định phù hợp cho một mục nào đó, hãy đặt found = false cho mục đó.
     `;
 
     try {
@@ -332,39 +388,64 @@ async function startServer() {
           responseSchema: {
             type: Type.OBJECT,
             properties: {
-              found: { type: Type.BOOLEAN },
-              student_id: { type: Type.INTEGER },
-              rule_id: { type: Type.INTEGER },
-              points_change: { type: Type.INTEGER },
-              explanation: { type: Type.STRING }
+              actions: {
+                type: Type.ARRAY,
+                items: {
+                  type: Type.OBJECT,
+                  properties: {
+                    found: { type: Type.BOOLEAN },
+                    student_id: { type: Type.INTEGER },
+                    rule_id: { type: Type.INTEGER },
+                    points_change: { type: Type.INTEGER },
+                    explanation: { type: Type.STRING }
+                  },
+                  required: ["found", "explanation"]
+                }
+              }
             },
-            required: ["found", "explanation"]
+            required: ["actions"]
           }
         }
       });
 
       console.log("AI Response:", response.text);
       const result = JSON.parse(response.text || "{}");
+      const actions = result.actions || [];
+      const successMessages: string[] = [];
+      const failMessages: string[] = [];
 
-      if (result.found && result.student_id && result.rule_id) {
-        db.prepare("INSERT INTO logs (student_id, rule_id, points_change, note) VALUES (?, ?, ?, ?)")
-          .run(result.student_id, result.rule_id, result.points_change, result.explanation);
-        
-        const student = students.find(s => s.id === result.student_id);
-        const currentPoints = db.prepare("SELECT COALESCE(SUM(points_change), 0) + 200 as total FROM logs WHERE student_id = ?").get(result.student_id) as { total: number };
-        
-        res.json({
-          success: true,
-          message: `Đã ghi nhận: ${student.name} (${student.group_name}) ${result.explanation}. Tổng điểm hiện tại: ${currentPoints.total} điểm.`
-        });
-      } else {
-        res.json({ success: false, message: result.explanation || "Tôi không hiểu yêu cầu của bạn hoặc không tìm thấy học sinh/lỗi tương ứng." });
+      for (const action of actions) {
+        if (action.found && action.student_id && action.rule_id) {
+          db.prepare("INSERT INTO logs (student_id, rule_id, points_change, note) VALUES (?, ?, ?, ?)")
+            .run(action.student_id, action.rule_id, action.points_change, action.explanation);
+          
+          const student = students.find(s => s.id === action.student_id);
+          successMessages.push(`${student.name}: ${action.explanation}`);
+        } else {
+          failMessages.push(action.explanation || "Không xác định được lỗi/học sinh.");
+        }
       }
+
+      let finalMessage = "";
+      if (successMessages.length > 0) {
+        finalMessage += "✅ Đã ghi nhận thành công:\n- " + successMessages.join("\n- ");
+      }
+      if (failMessages.length > 0) {
+        if (finalMessage) finalMessage += "\n\n";
+        finalMessage += "❌ Không thể ghi nhận:\n- " + failMessages.join("\n- ");
+      }
+
+      res.json({ 
+        success: true, 
+        message: finalMessage || "Tôi không tìm thấy thông tin hợp lệ để xử lý trong tin nhắn của bạn." 
+      });
     } catch (error: any) {
       console.error("AI Process Error:", error);
       let errorMessage = "Lỗi khi xử lý AI";
       
-      if (error.message?.includes("API key not valid") || error.status === "INVALID_ARGUMENT") {
+      if (error.status === 503 || error.message?.includes("503") || error.message?.includes("high demand")) {
+        errorMessage = "Hệ thống AI hiện đang quá tải (High Demand). Vui lòng thử lại sau vài giây hoặc vài phút. Đây là lỗi tạm thời từ phía máy chủ Google.";
+      } else if (error.message?.includes("API key not valid") || error.status === "INVALID_ARGUMENT") {
         errorMessage = "Khóa API (API Key) không hợp lệ. Vui lòng kiểm tra lại biến GEMINI_API_KEY trong phần Secrets của Google AI Studio (đảm bảo không có khoảng trắng thừa và khóa còn hoạt động).";
       } else {
         errorMessage += ": " + (error.message || "Lỗi không xác định");
@@ -392,9 +473,13 @@ async function startServer() {
   }
 
   const PORT = 3000;
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
+  try {
+    app.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server running on http://0.0.0.0:${PORT}`);
+    });
+  } catch (err) {
+    console.error("Failed to start server:", err);
+  }
 }
 
 startServer();

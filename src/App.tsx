@@ -72,10 +72,17 @@ export default function App() {
   const [summary, setSummary] = useState<GroupSummary[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
   const [chatMessage, setChatMessage] = useState('');
-  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'ai', text: string }[]>([]);
+  const [chatHistory, setChatHistory] = useState<{ role: 'user' | 'ai', text: string }[]>(() => {
+    const saved = localStorage.getItem('chat_history');
+    return saved ? JSON.parse(saved) : [];
+  });
   const [isProcessing, setIsProcessing] = useState(false);
   const [apiKey, setApiKey] = useState(localStorage.getItem('gemini_api_key') || '');
   const [showApiConfig, setShowApiConfig] = useState(false);
+
+  useEffect(() => {
+    localStorage.setItem('chat_history', JSON.stringify(chatHistory));
+  }, [chatHistory]);
 
   // Filters
   const [groupFilter, setGroupFilter] = useState<number | 'all'>('all');
@@ -89,6 +96,7 @@ export default function App() {
   // Manual Log Form
   const [manualRuleId, setManualRuleId] = useState<number>(0);
   const [manualNote, setManualNote] = useState('');
+  const [manualQuantity, setManualQuantity] = useState<number>(1);
 
   // New Student Form
   const [newStudentName, setNewStudentName] = useState('');
@@ -141,14 +149,38 @@ export default function App() {
           rule_id: rule.id,
           points_change: rule.points,
           note: manualNote || rule.description,
-          user_id: user?.id
+          user_id: user?.id,
+          quantity: manualQuantity
         })
       });
       if (res.ok) {
         setManualNote('');
         setManualRuleId(0);
+        setManualQuantity(1);
         fetchStudentLogs(selectedStudent.id);
         fetchData();
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleDeleteLog = async (logId: number) => {
+    if (!confirm("Bạn có chắc chắn muốn xóa bản ghi này không?")) return;
+    if (!selectedStudent) return;
+
+    try {
+      const res = await fetch(`/api/logs/${logId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user?.id })
+      });
+      if (res.ok) {
+        fetchStudentLogs(selectedStudent.id);
+        fetchData();
+      } else {
+        const data = await res.json();
+        alert(data.message || "Lỗi khi xóa bản ghi");
       }
     } catch (err) {
       console.error(err);
@@ -161,8 +193,16 @@ export default function App() {
         fetch('/api/summary'),
         fetch('/api/students')
       ]);
-      setSummary(await sumRes.json());
-      setStudents(await stdRes.json());
+      
+      if (!sumRes.ok || !stdRes.ok) {
+        throw new Error('Failed to fetch data');
+      }
+
+      const sumData = await sumRes.json();
+      const stdData = await stdRes.json();
+      
+      if (Array.isArray(sumData)) setSummary(sumData);
+      if (Array.isArray(stdData)) setStudents(stdData);
     } catch (err) {
       console.error('Error fetching data:', err);
     }
@@ -562,6 +602,17 @@ export default function App() {
                                   placeholder="Ghi chú thêm (không bắt buộc)"
                                   className="flex-1 px-4 py-2 rounded-xl border border-black/10 text-sm focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 font-sans"
                                 />
+                                <div className="flex items-center gap-2 bg-white border border-black/10 rounded-xl px-3">
+                                  <span className="text-[10px] uppercase font-bold text-[#5A5A40]/40">Số lần:</span>
+                                  <input 
+                                    type="number" 
+                                    min="1"
+                                    max="10"
+                                    value={manualQuantity}
+                                    onChange={(e) => setManualQuantity(parseInt(e.target.value) || 1)}
+                                    className="w-12 py-2 text-sm focus:outline-none font-sans font-bold text-[#5A5A40]"
+                                  />
+                                </div>
                                 <button 
                                   type="submit"
                                   disabled={!manualRuleId}
@@ -592,6 +643,13 @@ export default function App() {
                                   <div className={`text-sm font-bold ${log.points_change > 0 ? 'text-emerald-600' : 'text-red-500'}`}>
                                     {log.points_change > 0 ? '+' : ''}{log.points_change}
                                   </div>
+                                  <button 
+                                    onClick={() => handleDeleteLog(log.id)}
+                                    className="ml-4 p-1 text-red-300 hover:text-red-500 transition-colors"
+                                    title="Xóa bản ghi này"
+                                  >
+                                    <X size={14} />
+                                  </button>
                                 </div>
                               ))}
                             </div>
