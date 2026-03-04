@@ -170,17 +170,44 @@ export default function App() {
     if (!selectedStudent) return;
 
     try {
-      const res = await fetch(`/api/logs/${logId}`, {
-        method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_id: user?.id })
+      // Use query param for user_id to be safer
+      const res = await fetch(`/api/logs/${logId}?user_id=${user?.id}`, {
+        method: 'DELETE'
       });
+      console.log("Delete response status:", res.status);
       if (res.ok) {
+        console.log("Log deleted successfully");
         fetchStudentLogs(selectedStudent.id);
         fetchData();
       } else {
         const data = await res.json();
+        console.error("Delete failed:", data);
         alert(data.message || "Lỗi khi xóa bản ghi");
+      }
+    } catch (err) {
+      console.error(err);
+    }
+  };
+
+  const handleResetAll = async () => {
+    if (!confirm("CẢNH BÁO: Bạn có chắc chắn muốn RESET TOÀN BỘ ĐIỂM của cả lớp về 200 không? Hành động này sẽ xóa sạch lịch sử thi đua.")) return;
+    
+    try {
+      const res = await fetch('/api/reset-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_id: user?.id })
+      });
+      console.log("Reset response status:", res.status);
+      const data = await res.json();
+      if (data.success) {
+        console.log("Reset successful:", data.message);
+        alert(data.message);
+        fetchData();
+        if (selectedStudent) fetchStudentLogs(selectedStudent.id);
+      } else {
+        console.error("Reset failed:", data);
+        alert(data.message);
       }
     } catch (err) {
       console.error(err);
@@ -249,8 +276,13 @@ export default function App() {
   const handleDeleteStudent = async (id: number) => {
     if (!confirm('Bạn có chắc chắn muốn xóa học sinh này? Tất cả lịch sử điểm cũng sẽ bị xóa.')) return;
     try {
-      const res = await fetch(`/api/students/${id}`, { method: 'DELETE' });
-      if (res.ok) fetchData();
+      const res = await fetch(`/api/students/${id}?user_id=${user?.id}`, { method: 'DELETE' });
+      if (res.ok) {
+        fetchData();
+      } else {
+        const data = await res.json();
+        alert(data.message || "Lỗi khi xóa học sinh");
+      }
     } catch (err) {
       console.error(err);
     }
@@ -331,6 +363,33 @@ export default function App() {
               />
             </div>
             {error && <p className="text-red-500 text-sm italic">{error}</p>}
+            
+            <div className="pt-4 border-t border-black/5">
+              <div className="flex justify-between items-center mb-2">
+                <label className="text-[10px] uppercase tracking-widest font-bold text-[#5A5A40]/60 flex items-center gap-1">
+                  <Key size={10} /> Gemini API Key (Cần cho AI)
+                </label>
+                <a 
+                  href="https://aistudio.google.com/app/api-keys" 
+                  target="_blank" 
+                  rel="noopener noreferrer"
+                  className="text-[10px] text-[#5A5A40] font-bold hover:underline"
+                >
+                  Lấy Key tại đây
+                </a>
+              </div>
+              <input 
+                type="password"
+                value={apiKey}
+                onChange={(e) => {
+                  setApiKey(e.target.value);
+                  localStorage.setItem('gemini_api_key', e.target.value);
+                }}
+                placeholder="Dán API Key vào đây..."
+                className="w-full px-4 py-2 rounded-xl border border-black/10 focus:outline-none focus:ring-2 focus:ring-[#5A5A40]/20 transition-all font-mono text-xs"
+              />
+            </div>
+
             <button 
               type="submit"
               className="w-full bg-[#5A5A40] text-white py-4 rounded-full font-medium hover:bg-[#4A4A30] transition-colors shadow-lg shadow-[#5A5A40]/20"
@@ -813,7 +872,16 @@ export default function App() {
               </header>
 
               <div className="bg-white p-8 rounded-3xl border border-black/5 shadow-sm">
-                <h3 className="font-bold text-[#1a1a1a] mb-6">Thêm học sinh mới</h3>
+                <div className="flex justify-between items-center mb-6">
+                  <h3 className="font-bold text-[#1a1a1a]">Thêm học sinh mới</h3>
+                  <button 
+                    onClick={handleResetAll}
+                    className="flex items-center gap-2 px-4 py-2 rounded-xl border border-red-200 text-red-500 text-xs font-bold hover:bg-red-50 transition-all"
+                  >
+                    <TrendingDown size={14} />
+                    Reset toàn bộ điểm
+                  </button>
+                </div>
                 <form onSubmit={handleAddStudent} className="flex flex-wrap gap-4">
                   <div className="flex-1 min-w-[200px]">
                     <input 

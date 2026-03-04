@@ -187,11 +187,30 @@ async function startServer() {
 
   app.delete("/api/students/:id", (req, res) => {
     const { id } = req.params;
+    const raw_user_id = req.query.user_id || (req.body && req.body.user_id);
+    const user_id = raw_user_id ? Number(raw_user_id) : null;
+
+    console.log(`Attempting to delete student ID: ${id} by User ID: ${user_id}`);
+
+    if (!user_id) {
+      return res.status(401).json({ success: false, message: "Thiếu thông tin người dùng" });
+    }
+
     try {
-      db.prepare("DELETE FROM logs WHERE student_id = ?").run(id);
-      db.prepare("DELETE FROM students WHERE id = ?").run(id);
+      const user = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
+      if (!user || user.role !== 'admin') {
+        return res.status(403).json({ success: false, message: "Chỉ quản trị viên mới có quyền xóa học sinh" });
+      }
+
+      db.transaction(() => {
+        db.prepare("DELETE FROM logs WHERE student_id = ?").run(id);
+        db.prepare("DELETE FROM students WHERE id = ?").run(id);
+      })();
+      
+      console.log(`Successfully deleted student ${id}`);
       res.json({ success: true });
     } catch (err) {
+      console.error("Delete student error:", err);
       res.status(500).json({ success: false, message: "Lỗi khi xóa học sinh" });
     }
   });
@@ -243,12 +262,22 @@ async function startServer() {
 
   app.delete("/api/logs/:id", (req, res) => {
     const { id } = req.params;
-    const { user_id } = req.body;
+    const raw_user_id = req.query.user_id || (req.body && req.body.user_id);
+    const user_id = raw_user_id ? Number(raw_user_id) : null;
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
-    if (!user) return res.status(401).json({ success: false, message: "Chưa đăng nhập" });
+    console.log(`Attempting to delete log ID: ${id} by User ID: ${user_id}`);
+
+    if (!user_id) {
+      return res.status(401).json({ success: false, message: "Thiếu thông tin người dùng. Vui lòng đăng nhập lại." });
+    }
 
     try {
+      const user = db.prepare("SELECT * FROM users WHERE id = ?").get(user_id) as any;
+      if (!user) {
+        console.log(`User ${user_id} not found in database`);
+        return res.status(401).json({ success: false, message: "Người dùng không tồn tại hoặc phiên làm việc hết hạn." });
+      }
+
       // Admin can delete any log, leaders can only delete logs of their group members
       if (user.role === 'leader') {
         const log = db.prepare(`
@@ -258,15 +287,52 @@ async function startServer() {
           WHERE l.id = ?
         `).get(id) as any;
         
-        if (!log || log.group_id !== user.group_id) {
-          return res.status(403).json({ success: false, message: "Bạn không có quyền xóa lỗi này" });
+        if (!log) {
+          return res.status(404).json({ success: false, message: "Không tìm thấy bản ghi vi phạm này." });
+        }
+
+        if (log.group_id !== user.group_id) {
+          return res.status(403).json({ success: false, message: "Bạn không có quyền xóa lỗi của học sinh tổ khác." });
         }
       }
 
-      db.prepare("DELETE FROM logs WHERE id = ?").run(id);
-      res.json({ success: true });
+      const result = db.prepare("DELETE FROM logs WHERE id = ?").run(id);
+      console.log(`Delete result for log ${id}:`, result);
+      
+      if (result.changes > 0) {
+        res.json({ success: true });
+      } else {
+        res.status(404).json({ success: false, message: "Không tìm thấy bản ghi để xóa (có thể đã bị xóa trước đó)." });
+      }
     } catch (err) {
-      res.status(500).json({ success: false, message: "Lỗi khi xóa bản ghi" });
+      console.error("Delete log error:", err);
+      res.status(500).json({ success: false, message: "Lỗi hệ thống khi xóa bản ghi. Vui lòng thử lại sau." });
+    }
+  });
+
+  app.post("/api/reset-all", (req, res) => {
+    const { user_id } = req.body;
+    const uid = user_id ? Number(user_id) : null;
+    
+    console.log(`Attempting to reset all logs by User ID: ${uid}`);
+
+    if (!uid) {
+      return res.status(401).json({ success: false, message: "Thiếu thông tin người dùng." });
+    }
+
+    try {
+      const user = db.prepare("SELECT * FROM users WHERE id = ?").get(uid) as any;
+      
+      if (!user || user.role !== 'admin') {
+        return res.status(403).json({ success: false, message: "Chỉ quản trị viên mới có quyền reset điểm toàn bộ." });
+      }
+
+      const result = db.prepare("DELETE FROM logs").run();
+      console.log(`Reset all result:`, result);
+      res.json({ success: true, message: "Đã reset toàn bộ điểm về 200 thành công." });
+    } catch (err) {
+      console.error("Reset all error:", err);
+      res.status(500).json({ success: false, message: "Lỗi hệ thống khi reset điểm." });
     }
   });
 
